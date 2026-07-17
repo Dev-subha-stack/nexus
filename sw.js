@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'nexus-v1.0.0';
+const CACHE_NAME = 'MyApp-v1.0.0';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './offline.html'];
 
 self.addEventListener('install', event => {

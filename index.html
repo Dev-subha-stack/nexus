@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>NexusChat Web</title>
     
     <!-- Tailwind CSS for Styling -->
@@ -26,7 +26,23 @@
     </script>
     
     <style>
-        body { margin: 0; font-family: sans-serif; background-color: #020617; color: white; }
+        body { margin: 0; font-family: sans-serif; background-color: #020617; color: white; overflow-x: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        
+        @keyframes slideUp {
+          from { transform: translateY(100%); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .toast-animate { animation: slideUp 0.3s ease-out forwards; }
+        
+        @keyframes urgentPulse {
+          0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+          70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .urgent-alert { animation: urgentPulse 1.5s infinite; border: 2px solid #ef4444; }
     </style>
     <link rel="manifest" href="./manifest.json">
     <meta name="theme-color" content="#22c55e">
@@ -40,48 +56,55 @@
         import { createRoot } from 'react-dom/client';
         import { initializeApp } from 'firebase/app';
         import { 
-          getAuth, 
-          signInAnonymously, 
-          signInWithCustomToken, 
-          onAuthStateChanged
+          getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged
         } from 'firebase/auth';
         import { 
-          getFirestore, 
-          collection, 
-          onSnapshot, 
-          doc, 
-          setDoc, 
-          getDoc,
-          deleteDoc,
-          updateDoc
+          getFirestore, collection, onSnapshot, doc, setDoc, getDoc, deleteDoc, updateDoc, getDocs
         } from 'firebase/firestore';
         import { 
-          Search, MessageSquare, Send, Zap, EyeOff, Eye,
-          ArrowLeft, LogOut, Sparkles, Settings, Trash2, Check,
-          UserCircle, Palette, Info, Heart, Camera, Bell
+          Search, MessageSquare, Send, Zap, EyeOff, Eye, ArrowLeft, LogOut, Sparkles, 
+          Settings, Trash2, Check, UserCircle, Palette, Info, Heart, Camera, Bell,
+          Paperclip, Image as ImageIcon, Video, X, MapPin, Link as LinkIcon, ShieldAlert, 
+          AlertCircle, Mic, Square, CheckCircle2, Trash, Database
         } from 'lucide-react';
 
-        // --- Firebase Initialization ---
-        // Safely access global variables injected by the environment, or default to empty
-        const firebaseConfig = typeof window.__firebase_config !== 'undefined' && window.__firebase_config ? JSON.parse(window.__firebase_config) : {};
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // --- Safe Firebase Initialization ---
+        let app, auth, db;
+        let isFirebaseConfigured = true;
         const appId = typeof window.__app_id !== 'undefined' ? window.__app_id : 'nexus-chat-default';
 
-        // Helper to generate a consistent thread ID between two users
-        const getThreadId = (uid1, uid2) => {
-          return [uid1, uid2].sort().join('_');
-        };
+        try {
+            // Check if we are running in Canvas or externally (like AppGeyser)
+            const fbConfigStr = typeof window.__firebase_config !== 'undefined' ? window.__firebase_config : null;
+            
+            if (!fbConfigStr) {
+                // If you are running this in AppGeyser, replace the following line with your Firebase Config object:
+                // const fallbackConfig = { apiKey: "YOUR_KEY", authDomain: "YOUR_DOMAIN", projectId: "YOUR_ID", ... };
+                const fallbackConfig = null; 
+                
+                if (!fallbackConfig) {
+                    isFirebaseConfigured = false;
+                } else {
+                    app = initializeApp(fallbackConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+                }
+            } else {
+                const firebaseConfig = JSON.parse(fbConfigStr);
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch (err) {
+            console.error("Firebase init error:", err);
+            isFirebaseConfigured = false;
+        }
 
-        const AVATAR_COLORS = [
-          'bg-indigo-600', 'bg-red-600', 'bg-green-600', 
-          'bg-pink-600', 'bg-yellow-600', 'bg-purple-600',
-          'bg-teal-600', 'bg-orange-600', 'bg-slate-700'
-        ];
+        const getThreadId = (uid1, uid2) => [uid1, uid2].sort().join('_');
 
+        const AVATAR_COLORS = ['bg-indigo-600', 'bg-red-600', 'bg-green-600', 'bg-pink-600', 'bg-yellow-600', 'bg-purple-600', 'bg-teal-600', 'bg-orange-600', 'bg-slate-700'];
+        const BANNER_COLORS = ['bg-gradient-to-r from-indigo-500 to-purple-500', 'bg-gradient-to-r from-cyan-500 to-blue-500', 'bg-gradient-to-r from-red-500 to-orange-500', 'bg-gradient-to-r from-emerald-500 to-teal-500', 'bg-slate-800'];
         const AVATAR_ICONS = ['👽', '👻', '🤖', '🦊', '🐱', '🐶', '🐼', '🐯', '🐸', '🦄', '💀', '🔥', '✨', '⚡'];
-
         const APP_THEMES = {
           default: { bg: 'bg-slate-950', panel: 'bg-slate-900', border: 'border-slate-800', name: 'Slate Dark' },
           obsidian: { bg: 'bg-black', panel: 'bg-zinc-900', border: 'border-zinc-800', name: 'Obsidian Black' },
@@ -89,19 +112,10 @@
         };
 
         // --- Sub-components ---
-
-        // Unified Avatar Component to handle Images, Icons, and Initials
         const Avatar = ({ user, size = 'md', className = '', onClick }) => {
-          const sizeClasses = {
-            sm: 'w-10 h-10 text-lg',
-            md: 'w-12 h-12 text-xl',
-            lg: 'w-32 h-32 text-6xl'
-          };
+          const sizeClasses = { sm: 'w-10 h-10 text-lg', md: 'w-12 h-12 text-xl', lg: 'w-32 h-32 text-6xl' };
           const baseClasses = `${sizeClasses[size]} rounded-full flex items-center justify-center font-bold shadow-md flex-shrink-0 object-cover ${onClick ? 'cursor-pointer transition-transform hover:scale-105' : ''} ${className}`;
-
-          if (user?.customAvatarUrl) {
-            return <img src={user.customAvatarUrl} alt={user?.username} className={baseClasses} onClick={onClick} />;
-          }
+          if (user?.customAvatarUrl) return <img src={user.customAvatarUrl} alt={user?.username} className={baseClasses} onClick={onClick} />;
           return (
             <div className={`${baseClasses} ${user?.avatarColor || 'bg-slate-700'} text-white`} onClick={onClick}>
               {user?.avatarIcon || String(user?.username || '?').charAt(0).toUpperCase()}
@@ -124,7 +138,6 @@
                   if (prev <= 1) {
                     setDestroyed(true);
                     clearInterval(timer);
-                    // Permanently delete from database when timer hits 0
                     onDelete(msg.id);
                     return 0;
                   }
@@ -145,10 +158,7 @@
 
           if (!revealed && !isMe) {
             return (
-              <div 
-                onClick={() => setRevealed(true)}
-                className={`p-3 rounded-2xl max-w-[80%] my-1 cursor-pointer bg-slate-800 text-purple-400 border border-purple-500/50 flex items-center gap-2 self-start rounded-tl-sm transition-all hover:bg-slate-700`}
-              >
+              <div onClick={() => setRevealed(true)} className={`p-3 rounded-2xl max-w-[80%] my-1 cursor-pointer bg-slate-800 text-purple-400 border border-purple-500/50 flex items-center gap-2 self-start rounded-tl-sm transition-all hover:bg-slate-700`}>
                 <EyeOff size={18} />
                 <span className="font-medium">Tap to reveal whisper ({duration}s)</span>
               </div>
@@ -163,35 +173,54 @@
                 {!isMe && <span className="ml-auto text-red-400 font-bold">{timeLeft}s</span>}
               </div>
               <div>{typeof msg.text === 'string' ? msg.text : String(msg.text)}</div>
-              
-              {isMe && (
-                <button 
-                  onClick={() => onDelete(msg.id)}
-                  className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Delete message early"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
+              {isMe && <button onClick={() => onDelete(msg.id)} className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16} /></button>}
             </div>
           );
         };
 
         // --- Main App Component ---
         function App() {
+          if (!isFirebaseConfigured) {
+              return (
+                  <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6">
+                      <div className="bg-slate-900 p-8 rounded-3xl border border-slate-800 max-w-lg w-full shadow-2xl text-center">
+                          <Database size={64} className="text-red-500 mx-auto mb-6" />
+                          <h1 className="text-2xl font-bold mb-4">Database Setup Required</h1>
+                          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                              You have exported NexusChat to run outside of its secure environment (like AppGeyser). 
+                              To make the app connect to the internet, you must provide your own free Firebase Database configuration.
+                          </p>
+                          <div className="bg-black/50 p-4 rounded-xl border border-slate-800 text-xs font-mono text-left overflow-x-auto text-green-400 mb-6">
+                              1. Open this HTML file in a code editor.<br/>
+                              2. Find the line: <span className="text-yellow-300">const fallbackConfig = null;</span><br/>
+                              3. Replace it with your Firebase keys:<br/>
+                              <br/>
+                              <span className="text-indigo-300">const fallbackConfig</span> = &#123;<br/>
+                              &nbsp;&nbsp;apiKey: "YOUR_KEY",<br/>
+                              &nbsp;&nbsp;authDomain: "YOUR_DOMAIN",<br/>
+                              &nbsp;&nbsp;...<br/>
+                              &#125;;
+                          </div>
+                      </div>
+                  </div>
+              );
+          }
+
           // Firebase Auth State
           const [fbUser, setFbUser] = useState(null);
           const [authInitialized, setAuthInitialized] = useState(false);
+          const [isCheckingSession, setIsCheckingSession] = useState(true);
           
-          // App-level Virtual Login State
+          // App-level Virtual Login & UI State
           const [userProfile, setUserProfile] = useState(null);
           const [allUsers, setAllUsers] = useState([]);
-          const [authScreen, setAuthScreen] = useState('intro'); // intro, login, register
+          const [authScreen, setAuthScreen] = useState('intro');
           const [authError, setAuthError] = useState('');
           const [loginForm, setLoginForm] = useState({ username: '', password: '' });
           const [showPassword, setShowPassword] = useState(false);
+          const [toast, setToast] = useState(null);
 
-          // App Data State
+          // Data State
           const [threads, setThreads] = useState([]);
           const [activeThreadId, setActiveThreadId] = useState(null);
           const [messages, setMessages] = useState([]);
@@ -199,34 +228,44 @@
           
           const prevThreadsRef = useRef(null);
           const activeThreadRef = useRef(activeThreadId);
-          const [notifPermission, setNotifPermission] = useState(
-            typeof window.Notification !== 'undefined' ? window.Notification.permission : 'default'
-          );
+          
+          // Safely check notification permission
+          const getNotifPerm = () => { try { return window.Notification ? window.Notification.permission : 'default'; } catch(e) { return 'default'; } };
+          const [notifPermission, setNotifPermission] = useState(getNotifPerm());
 
-          // Keep ref synced for notification logic
-          useEffect(() => {
-            activeThreadRef.current = activeThreadId;
-          }, [activeThreadId]);
+          useEffect(() => { activeThreadRef.current = activeThreadId; }, [activeThreadId]);
           
           // UI State
-          const [view, setView] = useState('inbox'); // inbox, search, chat, profile-settings, app-settings, view-profile
+          const [view, setView] = useState('inbox'); 
           const [isWhisperMode, setIsWhisperMode] = useState(false);
-          const [whisperTimer, setWhisperTimer] = useState(5); // 5, 10, or 30
+          const [isUrgentMode, setIsUrgentMode] = useState(false);
+          const [whisperTimer, setWhisperTimer] = useState(5);
           const [messageInput, setMessageInput] = useState('');
+          const [chatAttachment, setChatAttachment] = useState(null); 
           const [isBuzzed, setIsBuzzed] = useState(false);
           const [viewingProfileUid, setViewingProfileUid] = useState(null);
           
+          // Voice Recording State
+          const [isRecording, setIsRecording] = useState(false);
+          const [recordingTime, setRecordingTime] = useState(0);
+          const mediaRecorderRef = useRef(null);
+          const audioChunksRef = useRef([]);
+
           // Settings Form State
-          const [editBio, setEditBio] = useState('');
-          const [editColor, setEditColor] = useState('');
-          const [editIcon, setEditIcon] = useState('');
-          const [editCustomImage, setEditCustomImage] = useState('');
+          const [editProfileData, setEditProfileData] = useState({ bio: '', color: '', icon: '', image: '', banner: '', location: '', website: '' });
           const [appThemeKey, setAppThemeKey] = useState('default');
+          const [incognitoMode, setIncognitoMode] = useState(false);
 
           const messagesEndRef = useRef(null);
           const fileInputRef = useRef(null);
+          const chatFileRef = useRef(null);
 
           const themeClasses = APP_THEMES[appThemeKey] || APP_THEMES['default'];
+
+          const showToast = (msg) => {
+            setToast(msg);
+            setTimeout(() => setToast(null), 3000);
+          };
 
           // --- Strict Firebase Connection ---
           useEffect(() => {
@@ -237,12 +276,9 @@
                 } else {
                   await signInAnonymously(auth);
                 }
-              } catch (err) {
-                console.error("Firebase Auth error:", err);
-              }
+              } catch (err) { console.error("Firebase Auth error:", err); }
             };
             initAuth();
-
             const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
               setFbUser(currentUser);
               setAuthInitialized(true);
@@ -250,7 +286,32 @@
             return () => unsubscribe();
           }, []);
 
-          // Fetch All Users
+          // Safe Persistent Session Restoration
+          useEffect(() => {
+            const checkSession = async () => {
+                if (!fbUser) {
+                    setIsCheckingSession(false);
+                    return;
+                }
+                try {
+                    const sessionSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', fbUser.uid));
+                    if (sessionSnap.exists()) {
+                        const { profileUid } = sessionSnap.data();
+                        const profileSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', profileUid));
+                        if (profileSnap.exists()) {
+                            completeLoginSetup(profileSnap.data(), false);
+                        }
+                    }
+                } catch(e) { console.error("Session check error", e); }
+                setIsCheckingSession(false);
+            };
+            
+            if (authInitialized) {
+                checkSession();
+            }
+          }, [authInitialized, fbUser]); // Removed allUsers dependency to fix hang
+
+          // Fetch All Users globally
           useEffect(() => {
             if (!fbUser) return;
             const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
@@ -261,21 +322,23 @@
             return () => unsub();
           }, [fbUser]);
 
-          // Keep Virtual Profile Synced
+          // Keep Virtual Profile Synced in real-time
           useEffect(() => {
             if (userProfile && allUsers.length > 0) {
               const updatedProfile = allUsers.find(u => u.uid === userProfile.uid);
               if (updatedProfile && JSON.stringify(updatedProfile) !== JSON.stringify(userProfile)) {
                 setUserProfile(updatedProfile);
-                setEditBio(updatedProfile.bio || '');
-                setEditColor(updatedProfile.avatarColor || 'bg-indigo-600');
-                setEditIcon(updatedProfile.avatarIcon || '');
-                setEditCustomImage(updatedProfile.customAvatarUrl || '');
+                setEditProfileData({
+                  bio: updatedProfile.bio || '', color: updatedProfile.avatarColor || 'bg-indigo-600',
+                  icon: updatedProfile.avatarIcon || '', image: updatedProfile.customAvatarUrl || '',
+                  banner: updatedProfile.bannerColor || 'bg-slate-800', location: updatedProfile.location || '',
+                  website: updatedProfile.website || ''
+                });
               }
             }
           }, [allUsers, userProfile]);
 
-          // Fetch User's Threads
+          // Fetch Threads & Notifications safely
           useEffect(() => {
             if (!fbUser || !userProfile) return;
             const threadsRef = collection(db, 'artifacts', appId, 'public', 'data', 'threads');
@@ -288,64 +351,102 @@
               if (prevThreadsRef.current !== null) {
                 myThreads.forEach(thread => {
                   const prev = prevThreadsRef.current[thread.id];
-                  // Check if thread updated and message is from someone else
                   if (prev && thread.updatedAt > prev.updatedAt && thread.lastMessageSenderId && thread.lastMessageSenderId !== userProfile.uid) {
                     const isBuzz = typeof thread.lastMessage === 'string' && thread.lastMessage.includes('Buzz');
-                    
-                    // Trigger Android vibration on Buzz
-                    if (isBuzz && "vibrate" in navigator) {
-                      navigator.vibrate(1000);
+                    // Hardware safety check for mobile vibrations
+                    if (isBuzz && typeof navigator !== 'undefined' && navigator.vibrate) {
+                       try { navigator.vibrate(1000); } catch(e) {}
                     }
-
-                    // Trigger OS Notification
-                    if (typeof window.Notification !== 'undefined' && window.Notification.permission === 'granted') {
-                      if (document.hidden || activeThreadRef.current !== thread.id) {
-                        const otherUid = thread.participants.find(id => id !== userProfile.uid);
-                        const senderName = thread.participantDetails?.[otherUid] || 'Someone';
-                        new window.Notification(`New message from @${senderName}`, {
-                          body: thread.lastMessage
-                        });
-                      }
-                    }
+                    try {
+                        if (typeof window.Notification !== 'undefined' && window.Notification.permission === 'granted') {
+                          if (document.hidden || activeThreadRef.current !== thread.id) {
+                            const otherUid = thread.participants.find(id => id !== userProfile.uid);
+                            const senderName = thread.participantDetails?.[otherUid] || 'Someone';
+                            new window.Notification(`New message from @${senderName}`, { body: thread.lastMessage });
+                          }
+                        }
+                    } catch(e) {}
                   }
                 });
               }
-              
-              prevThreadsRef.current = myThreads.reduce((acc, t) => {
-                acc[t.id] = t;
-                return acc;
-              }, {});
+              prevThreadsRef.current = myThreads.reduce((acc, t) => { acc[t.id] = t; return acc; }, {});
             }, (err) => console.error("Threads fetch error:", err));
             return () => unsub();
           }, [fbUser, userProfile]);
 
-          // Fetch Messages for Active Thread
+          // Fetch Messages
           useEffect(() => {
-            if (!fbUser || !userProfile || !activeThreadId) {
-              setMessages([]);
-              return;
-            }
+            if (!fbUser || !userProfile || !activeThreadId) { setMessages([]); return; }
             const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`);
             const unsub = onSnapshot(messagesRef, (snap) => {
               const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
               msgs.sort((a, b) => a.timestamp - b.timestamp);
               setMessages(msgs);
-              
               const lastMsg = msgs[msgs.length - 1];
-              if (lastMsg && lastMsg.isBuzz && lastMsg.senderId !== userProfile.uid && (Date.now() - lastMsg.timestamp < 3000)) {
-                triggerBuzz();
-              }
+              if (lastMsg && lastMsg.isBuzz && lastMsg.senderId !== userProfile.uid && (Date.now() - lastMsg.timestamp < 3000)) triggerBuzz();
             }, (err) => console.error("Messages fetch error:", err));
             return () => unsub();
           }, [fbUser, userProfile, activeThreadId]);
 
-          // Auto-scroll
-          useEffect(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }, [messages]);
+          useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-          // --- Auth Actions ---
-          const handleLogout = () => {
+          // --- Voice Recording Logic ---
+          useEffect(() => {
+            let interval;
+            if (isRecording) {
+              interval = setInterval(() => {
+                setRecordingTime(prev => {
+                  if (prev >= 14) { stopRecording(); return 15; }
+                  return prev + 1;
+                });
+              }, 1000);
+            } else {
+              setRecordingTime(0);
+            }
+            return () => clearInterval(interval);
+          }, [isRecording]);
+
+          const startRecording = async () => {
+             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                 showToast("Audio recording not supported in this app/browser.");
+                 return;
+             }
+             try {
+                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                 mediaRecorderRef.current = new MediaRecorder(stream);
+                 audioChunksRef.current = [];
+                 mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
+                 mediaRecorderRef.current.onstop = () => {
+                     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                     const reader = new FileReader();
+                     reader.readAsDataURL(audioBlob);
+                     reader.onloadend = () => {
+                         setChatAttachment({ url: reader.result, type: 'audio' });
+                     };
+                     stream.getTracks().forEach(track => track.stop());
+                 };
+                 mediaRecorderRef.current.start();
+                 setIsRecording(true);
+             } catch(e) { 
+                 console.error("Mic error", e); 
+                 showToast("Microphone access denied. Please grant permissions."); 
+             }
+          };
+
+          const stopRecording = () => {
+              if(mediaRecorderRef.current && isRecording) {
+                  mediaRecorderRef.current.stop();
+                  setIsRecording(false);
+              }
+          };
+
+          // --- Auth Logic ---
+          const handleLogout = async () => {
+            try {
+              if (fbUser) {
+                  await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', fbUser.uid));
+              }
+            } catch(e) { console.error(e); }
             setUserProfile(null);
             setView('inbox');
             setActiveThreadId(null);
@@ -353,233 +454,307 @@
             setAuthScreen('intro');
           };
 
-          const completeLoginSetup = (u) => {
+          const completeLoginSetup = async (u, saveSession = true) => {
             setUserProfile(u);
-            setEditBio(u.bio || '');
-            setEditColor(u.avatarColor || 'bg-indigo-600');
-            setEditIcon(u.avatarIcon || '');
-            setEditCustomImage(u.customAvatarUrl || '');
+            setEditProfileData({
+              bio: u.bio || '', color: u.avatarColor || 'bg-indigo-600', icon: u.avatarIcon || '',
+              image: u.customAvatarUrl || '', banner: u.bannerColor || 'bg-slate-800', location: u.location || '', website: u.website || ''
+            });
             setLoginForm({ username: '', password: '' });
             setView('inbox');
+            
+            if (saveSession && fbUser) {
+               try {
+                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', fbUser.uid), { profileUid: u.uid });
+               } catch(e) { console.error(e); }
+            }
           };
 
           const handleRegister = async (e) => {
-            e.preventDefault();
-            setAuthError('');
+            e.preventDefault(); setAuthError('');
             const { username, password } = loginForm;
             const cleanUsername = username.trim().toLowerCase();
-            
-            if (!cleanUsername || password.length < 6) {
-              setAuthError('Username required, password must be at least 6 characters.');
-              return;
-            }
-
-            if (allUsers.some(u => u.username === cleanUsername)) {
-              setAuthError('Username is already taken.');
-              return;
-            }
-
+            if (!cleanUsername || password.length < 6) return setAuthError('Username required, password min 6 chars.');
+            if (allUsers.some(u => u.username === cleanUsername)) return setAuthError('Username is already taken.');
             try {
               const profileUid = `usr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
               const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', profileUid);
-              
               const newProfile = {
-                uid: profileUid,
-                username: cleanUsername,
-                passCode: btoa(password), 
-                bio: "Available",
+                uid: profileUid, username: cleanUsername, passCode: btoa(password), bio: "Available",
                 avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
                 avatarIcon: AVATAR_ICONS[Math.floor(Math.random() * AVATAR_ICONS.length)],
-                customAvatarUrl: "",
-                joinedAt: Date.now()
+                bannerColor: 'bg-slate-800', customAvatarUrl: "", location: "", website: "", joinedAt: Date.now()
               };
-
               await setDoc(profileRef, newProfile);
               completeLoginSetup(newProfile);
-            } catch (err) {
-              console.error("Registration error:", err);
-              setAuthError("Could not create account at this time.");
-            }
+            } catch (err) { setAuthError("Could not create account at this time."); }
           };
 
           const handleLogin = async (e) => {
-            e.preventDefault();
-            setAuthError('');
+            e.preventDefault(); setAuthError('');
             const { username, password } = loginForm;
             const cleanUsername = username.trim().toLowerCase();
-            
             const foundUser = allUsers.find(u => u.username === cleanUsername);
             
             if (foundUser) {
               if (foundUser.passCode === btoa(password)) {
-                // Normal Login Success
                 completeLoginSetup(foundUser);
               } else if (!foundUser.passCode) {
-                // LEGACY MIGRATION: Old account without a password
                 try {
-                  const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', foundUser.uid);
-                  await updateDoc(profileRef, { passCode: btoa(password) });
-                  const updatedUser = { ...foundUser, passCode: btoa(password) };
-                  completeLoginSetup(updatedUser);
-                } catch (err) {
-                  console.error("Migration error:", err);
-                  setAuthError('Error updating old account. Try again.');
-                }
-              } else {
-                setAuthError('Invalid username or password.');
-              }
-            } else {
-              setAuthError('Invalid username or password.');
+                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', foundUser.uid), { passCode: btoa(password) });
+                  completeLoginSetup({ ...foundUser, passCode: btoa(password) });
+                } catch (err) { setAuthError('Error updating old account. Try again.'); }
+              } else { setAuthError('Invalid username or password.'); }
+            } else { setAuthError('Invalid username or password.'); }
+          };
+
+          // --- Media Compressors ---
+          const processFile = (file, callback, maxSizeKb = 500) => {
+            if (!file) return;
+            if (file.type.startsWith('video/')) {
+              if (file.size > 700000) { showToast("Video too large! Max size 700KB."); return; }
+              const reader = new FileReader();
+              reader.onload = (event) => callback(event.target.result, 'video');
+              reader.readAsDataURL(file);
+              return;
+            }
+            if (file.type.startsWith('image/')) {
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                  const canvas = document.createElement('canvas');
+                  let { width, height } = img;
+                  const MAX = 600;
+                  if (width > height) { if (width > MAX) { height *= MAX / width; width = MAX; } } 
+                  else { if (height > MAX) { width *= MAX / height; height = MAX; } }
+                  canvas.width = width; canvas.height = height;
+                  canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                  callback(canvas.toDataURL('image/jpeg', 0.7), 'image');
+                };
+                img.src = event.target.result;
+              };
+              reader.readAsDataURL(file);
             }
           };
 
-          // Profile Image Upload Compressor
-          const handleImageUpload = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              const img = new Image();
-              img.onload = () => {
-                // Create canvas to resize image
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 200;
-                const MAX_HEIGHT = 200;
-                let width = img.width;
-                let height = img.height;
-
-                if (width > height) {
-                  if (width > MAX_WIDTH) {
-                    height *= MAX_WIDTH / width;
-                    width = MAX_WIDTH;
-                  }
-                } else {
-                  if (height > MAX_HEIGHT) {
-                    width *= MAX_HEIGHT / height;
-                    height = MAX_HEIGHT;
-                  }
-                }
-
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                
-                // Compress to JPEG to save space in Firestore
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-                setEditCustomImage(dataUrl);
-              };
-              img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
-          };
-
+          // --- Actions ---
           const handleUpdateProfile = async (e) => {
             e.preventDefault();
             if (!fbUser || !userProfile) return;
-            
             try {
-              const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', userProfile.uid);
-              await updateDoc(profileRef, {
-                bio: editBio.trim(),
-                avatarColor: editColor,
-                avatarIcon: editIcon,
-                customAvatarUrl: editCustomImage
+              await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userProfile.uid), {
+                bio: editProfileData.bio.trim(), avatarColor: editProfileData.color, avatarIcon: editProfileData.icon,
+                customAvatarUrl: editProfileData.image, bannerColor: editProfileData.banner, 
+                location: editProfileData.location.trim(), website: editProfileData.website.trim()
               });
-              alert("Profile updated successfully!");
-            } catch (err) {
-              console.error("Profile update error:", err);
-            }
+              showToast("Profile updated successfully!");
+            } catch (err) { console.error("Profile update error:", err); }
           };
 
-          const triggerBuzz = () => {
-            setIsBuzzed(true);
-            setTimeout(() => setIsBuzzed(false), 800);
+          const triggerBuzz = () => { 
+              setIsBuzzed(true); 
+              try { if (navigator.vibrate) navigator.vibrate(1000); } catch(e){}
+              setTimeout(() => setIsBuzzed(false), 800); 
           };
 
           const startChat = async (otherUser) => {
             const threadId = getThreadId(userProfile.uid, otherUser.uid);
-            const threadRef = doc(db, 'artifacts', appId, 'public', 'data', 'threads', threadId);
-            
             try {
-              const snap = await getDoc(threadRef);
+              const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'threads', threadId));
               if (!snap.exists()) {
-                await setDoc(threadRef, {
-                  id: threadId,
-                  participants: [userProfile.uid, otherUser.uid],
-                  participantDetails: {
-                    [userProfile.uid]: userProfile.username,
-                    [otherUser.uid]: otherUser.username
-                  },
-                  updatedAt: Date.now(),
-                  lastMessage: "Chat started"
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'threads', threadId), {
+                  id: threadId, participants: [userProfile.uid, otherUser.uid],
+                  participantDetails: { [userProfile.uid]: userProfile.username, [otherUser.uid]: otherUser.username },
+                  updatedAt: Date.now(), lastMessage: "Chat started"
                 });
               }
-              setActiveThreadId(threadId);
-              setView('chat');
-              setSearchQuery('');
-            } catch (err) {
-              console.error("Error starting chat:", err);
-            }
+              setActiveThreadId(threadId); setView('chat'); setSearchQuery('');
+            } catch (err) { console.error(err); }
           };
 
           const sendMessage = async (e, type = 'text') => {
             if (e) e.preventDefault();
             if (!activeThreadId || !userProfile) return;
-            if (type === 'text' && !messageInput.trim()) return;
+            if (type === 'text' && !messageInput.trim() && !chatAttachment) return;
+
+            let textContent = messageInput.trim();
+            if (!textContent && chatAttachment) {
+                if (chatAttachment.type === 'video') textContent = 'Sent a video';
+                else if (chatAttachment.type === 'audio') textContent = 'Sent a voice note';
+                else textContent = 'Sent an image';
+            }
 
             const msgData = {
-              senderId: userProfile.uid,
-              timestamp: Date.now(),
-              type: type,
-              text: type === 'text' ? messageInput.trim() : 'Buzzed you!',
-              isWhisper: isWhisperMode && type === 'text',
-              whisperDuration: whisperTimer,
-              isBuzz: type === 'buzz'
+              senderId: userProfile.uid, timestamp: Date.now(), type: type,
+              text: type === 'text' ? textContent : 'Buzzed you!',
+              isWhisper: isWhisperMode && type === 'text', 
+              whisperDuration: whisperTimer, 
+              isUrgent: isUrgentMode && type === 'text',
+              isBuzz: type === 'buzz',
+              mediaUrl: chatAttachment?.url || null, 
+              mediaType: chatAttachment?.type || null
             };
 
             try {
               const msgId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-              const msgRef = doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId);
-              await setDoc(msgRef, msgData);
-
-              const threadRef = doc(db, 'artifacts', appId, 'public', 'data', 'threads', activeThreadId);
-              await setDoc(threadRef, {
-                updatedAt: Date.now(),
-                lastMessage: type === 'buzz' ? "⚡ Sent a Buzz!" : (msgData.isWhisper ? "🤫 Sent a whisper" : msgData.text),
-                lastMessageSenderId: userProfile.uid
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId), msgData);
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'threads', activeThreadId), {
+                updatedAt: Date.now(), lastMessageSenderId: userProfile.uid,
+                lastMessage: type === 'buzz' ? "⚡ Sent a Buzz!" : (msgData.isWhisper ? "🤫 Sent a whisper" : (msgData.isUrgent ? "🚨 Urgent Message!" : msgData.text))
               }, { merge: true });
 
-              setMessageInput('');
-              setIsWhisperMode(false);
+              setMessageInput(''); setIsWhisperMode(false); setIsUrgentMode(false); setChatAttachment(null);
               if (type === 'buzz') triggerBuzz();
-              
-            } catch (err) {
-              console.error("Error sending message:", err);
-            }
+            } catch (err) { console.error(err); showToast("Failed to send message."); }
           };
+
+          const handleReaction = async (msgId, currentReactions) => {
+             try {
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId), {
+                   reaction: currentReactions === '❤️' ? null : '❤️'
+                });
+             } catch (err) {}
+          };
+          
+          const handleAcknowledgeUrgent = async (msgId) => {
+              try {
+                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId), {
+                     isUrgent: false
+                  });
+               } catch (err) {}
+          }
 
           const handleDeleteMessage = async (msgId) => {
             if (!activeThreadId) return;
-            try {
-              const msgRef = doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId);
-              await deleteDoc(msgRef);
-            } catch (err) {
-              console.error("Error deleting message:", err);
-            }
+            try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, msgId)); } 
+            catch (err) { console.error(err); }
           };
 
+          const handleClearChat = async () => {
+              if (!activeThreadId) return;
+              if (!window.confirm("Are you sure you want to permanently delete all messages in this chat for both people?")) return;
+              try {
+                  const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`);
+                  const snap = await getDocs(messagesRef);
+                  const deletePromises = snap.docs.map(d => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', `messages_${activeThreadId}`, d.id)));
+                  await Promise.all(deletePromises);
+                  
+                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'threads', activeThreadId), {
+                    updatedAt: Date.now(), lastMessageSenderId: userProfile.uid,
+                    lastMessage: "Chat history cleared."
+                  }, { merge: true });
+                  
+                  showToast("Chat wiped successfully.");
+              } catch(e) { console.error(e); showToast("Failed to clear chat."); }
+          }
+          
           const cycleWhisperTimer = () => {
             setWhisperTimer(prev => prev === 5 ? 10 : prev === 10 ? 30 : 5);
           };
 
-          // --- Render Guards ---
-          if (!authInitialized || !fbUser) {
-            return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-300">Connecting to Nexus Secure Servers...</div>;
+          // --- Sub-components for Messages ---
+          const MessageBubble = ({ msg, isMe }) => {
+            if (msg.isBuzz) {
+              return (
+                <div className="w-full flex justify-center my-2 group relative">
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2">
+                    <Zap size={14} /> {isMe ? `You buzzed them` : `They buzzed you!`}
+                  </div>
+                  {isMe && <button onClick={() => handleDeleteMessage(msg.id)} className="absolute right-[calc(50%-100px)] p-1 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>}
+                </div>
+              );
+            }
+
+            if (msg.isWhisper) {
+              return <WhisperBubble msg={msg} currentUserId={userProfile.uid} onDelete={handleDeleteMessage} />;
+            }
+
+            return (
+              <div 
+                className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${isMe ? 'self-end items-end' : 'self-start items-start'} my-0.5 group relative cursor-pointer`}
+                onDoubleClick={() => handleReaction(msg.id, msg.reaction)}
+                title="Double click to ❤️"
+              >
+                 <div className={`px-4 py-2.5 rounded-2xl relative ${isMe ? `${userProfile?.avatarColor || 'bg-indigo-600'} text-white rounded-tr-sm shadow-sm` : `${themeClasses.panel} text-slate-200 border ${themeClasses.border} rounded-tl-sm shadow-sm`} ${msg.isUrgent ? 'urgent-alert' : ''}`}>
+                   
+                   {msg.isUrgent && !isMe && (
+                       <div className="flex items-center gap-2 mb-2 text-red-400 font-bold text-xs uppercase tracking-wider">
+                           <AlertCircle size={14} /> Priority Message
+                       </div>
+                   )}
+                   
+                   {msg.mediaUrl && msg.mediaType === 'image' && (
+                     <img src={msg.mediaUrl} alt="attachment" className="rounded-xl mb-2 max-h-48 object-cover cursor-default" />
+                   )}
+                   {msg.mediaUrl && msg.mediaType === 'video' && (
+                     <video src={msg.mediaUrl} controls className="rounded-xl mb-2 max-h-48 cursor-default" />
+                   )}
+                   {msg.mediaUrl && msg.mediaType === 'audio' && (
+                     <audio src={msg.mediaUrl} controls className="mb-2 max-w-[200px] h-10 rounded-lg outline-none cursor-default" />
+                   )}
+                   
+                   <p className="break-words">{msg.text}</p>
+                   
+                   {msg.isUrgent && !isMe && (
+                       <button onClick={(e) => { e.stopPropagation(); handleAcknowledgeUrgent(msg.id); }} className="mt-3 w-full flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1.5 rounded-lg transition-colors">
+                           <CheckCircle2 size={14} /> Acknowledge
+                       </button>
+                   )}
+                   
+                   {/* Reaction Badge */}
+                   {msg.reaction && (
+                     <div className={`absolute -bottom-3 ${isMe ? '-left-2' : '-right-2'} bg-slate-800 border border-slate-700 text-sm rounded-full px-1.5 py-0.5 shadow-lg animate-bounce`}>
+                       {msg.reaction}
+                     </div>
+                   )}
+                 </div>
+                 {isMe && (
+                   <button onClick={() => handleDeleteMessage(msg.id)} className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                     <Trash2 size={16} />
+                   </button>
+                 )}
+              </div>
+            );
+          };
+
+          // --- Helpers ---
+          const searchResults = searchQuery ? allUsers.filter(u => u?.username?.toLowerCase().includes(searchQuery.toLowerCase()) && u.uid !== userProfile?.uid && (!incognitoMode)) : [];
+          const getOtherUserFromThread = (thread) => {
+            const otherUid = thread.participants?.find(id => id !== userProfile.uid);
+            const fullUser = allUsers.find(u => u.uid === otherUid);
+            return {
+              uid: otherUid, username: fullUser?.username || thread.participantDetails?.[otherUid] || 'Unknown User',
+              avatarColor: fullUser?.avatarColor || 'bg-slate-700', avatarIcon: fullUser?.avatarIcon || '', customAvatarUrl: fullUser?.customAvatarUrl || '',
+              bio: fullUser?.bio || 'Available', bannerColor: fullUser?.bannerColor || 'bg-slate-800', 
+              location: fullUser?.location || '', website: fullUser?.website || '', joinedAt: fullUser?.joinedAt || null
+            };
+          };
+
+          const activeThreadDetails = activeThreadId ? threads.find(t => t.id === activeThreadId) : null;
+          const activeOtherUser = activeThreadDetails ? getOtherUserFromThread(activeThreadDetails) : null;
+          const viewingProfile = allUsers.find(u => u.uid === viewingProfileUid);
+
+          // --- App Rendering ---
+          if (!authInitialized || isCheckingSession) {
+            return (
+               <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300">
+                   <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                   <p className="font-medium animate-pulse">Connecting to Nexus Secure Servers...</p>
+               </div>
+            );
+          }
+          
+          if (!fbUser && authInitialized) {
+             return (
+               <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-red-400 p-6 text-center">
+                   <ShieldAlert size={48} className="mb-4" />
+                   <h2 className="text-xl font-bold mb-2">Browser Blocked Connection</h2>
+                   <p className="text-slate-400 max-w-sm">NexusChat requires cookies or local storage to be enabled in order to establish a secure database connection.</p>
+               </div>
+             )
           }
 
-          // Pre-login / Intro View
           if (!userProfile) {
             return (
               <div className={`min-h-screen ${themeClasses.bg} flex flex-col items-center justify-center text-white p-4 transition-colors duration-500`}>
@@ -587,33 +762,16 @@
                   <div className="flex justify-center mb-6">
                     <div className="bg-indigo-600 p-3 rounded-full relative">
                       <Sparkles size={32} className="text-white" />
-                      <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900" title="Database Connected"></div>
+                      <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
                     </div>
                   </div>
-                  
                   <h1 className="text-3xl font-bold text-center mb-2">NexusChat</h1>
                   
                   {authScreen === 'intro' && (
                     <div className="space-y-4 mt-8 animate-in fade-in zoom-in duration-300">
                       <p className="text-slate-400 text-center mb-6">Secure, fast, and globally connected.</p>
-                      
-                      <div className="flex items-center justify-center gap-2 text-xs text-green-400 mb-6 bg-green-500/10 py-2.5 rounded-lg border border-green-500/20 font-medium">
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                        Database Connection Upgraded & Secure
-                      </div>
-
-                      <button 
-                        onClick={() => setAuthScreen('register')}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-all hover:scale-[1.02] shadow-lg shadow-indigo-600/20"
-                      >
-                        Create New Account
-                      </button>
-                      <button 
-                        onClick={() => setAuthScreen('login')}
-                        className={`w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 rounded-xl transition-all border ${themeClasses.border}`}
-                      >
-                        Login to Existing Account
-                      </button>
+                      <button onClick={() => setAuthScreen('register')} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-all shadow-lg shadow-indigo-600/20">Create New Account</button>
+                      <button onClick={() => setAuthScreen('login')} className={`w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 rounded-xl transition-all border ${themeClasses.border}`}>Login to Existing Account</button>
                     </div>
                   )}
 
@@ -621,43 +779,13 @@
                     <form onSubmit={handleRegister} className="space-y-4 mt-4 animate-in slide-in-from-right-4 duration-300">
                       <h2 className="text-xl font-semibold text-center mb-4">Create Account</h2>
                       {authError && <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl">{authError}</div>}
-                      
-                      <input 
-                        type="text" 
-                        placeholder="Choose a username..." 
-                        value={loginForm.username}
-                        onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
-                        className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 rounded-xl focus:outline-none focus:border-indigo-500 transition-all`}
-                        required
-                        pattern="[a-zA-Z0-9_]+"
-                        title="Only letters, numbers, and underscores allowed"
-                      />
+                      <input type="text" placeholder="Choose a username..." value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 rounded-xl focus:outline-none focus:border-indigo-500`} required pattern="[a-zA-Z0-9_]+" />
                       <div className="relative">
-                        <input 
-                          type={showPassword ? "text" : "password"} 
-                          placeholder="Create a password (min 6 chars)..." 
-                          value={loginForm.password}
-                          onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                          className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 pr-12 rounded-xl focus:outline-none focus:border-indigo-500 transition-all`}
-                          required
-                          minLength={6}
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                          title={showPassword ? "Hide password" : "Show password"}
-                        >
-                          {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                        </button>
+                        <input type={showPassword ? "text" : "password"} placeholder="Create a password (min 6 chars)..." value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 pr-12 rounded-xl focus:outline-none focus:border-indigo-500`} required minLength={6} />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
                       </div>
-                      
-                      <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-colors mt-2">
-                        Sign Up
-                      </button>
-                      <button type="button" onClick={() => { setAuthScreen('intro'); setAuthError(''); setShowPassword(false); }} className="w-full text-slate-400 hover:text-white text-sm py-2">
-                        &larr; Back
-                      </button>
+                      <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-colors mt-2">Sign Up</button>
+                      <button type="button" onClick={() => { setAuthScreen('intro'); setAuthError(''); setShowPassword(false); }} className="w-full text-slate-400 hover:text-white text-sm py-2">&larr; Back</button>
                     </form>
                   )}
 
@@ -665,642 +793,318 @@
                     <form onSubmit={handleLogin} className="space-y-4 mt-4 animate-in slide-in-from-left-4 duration-300">
                       <h2 className="text-xl font-semibold text-center mb-4">Welcome Back</h2>
                       {authError && <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl">{authError}</div>}
-                      
-                      <input 
-                        type="text" 
-                        placeholder="Enter your username..." 
-                        value={loginForm.username}
-                        onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
-                        className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 rounded-xl focus:outline-none focus:border-indigo-500 transition-all`}
-                        required
-                      />
+                      <input type="text" placeholder="Enter your username..." value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 rounded-xl focus:outline-none focus:border-indigo-500`} required />
                       <div className="relative">
-                        <input 
-                          type={showPassword ? "text" : "password"} 
-                          placeholder="Enter your password..." 
-                          value={loginForm.password}
-                          onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                          className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 pr-12 rounded-xl focus:outline-none focus:border-indigo-500 transition-all`}
-                          required
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                          title={showPassword ? "Hide password" : "Show password"}
-                        >
-                          {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                        </button>
+                        <input type={showPassword ? "text" : "password"} placeholder="Enter your password..." value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3.5 pr-12 rounded-xl focus:outline-none focus:border-indigo-500`} required />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
                       </div>
-                      
-                      <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-colors mt-2">
-                        Secure Login
-                      </button>
-                      <button type="button" onClick={() => { setAuthScreen('intro'); setAuthError(''); setShowPassword(false); }} className="w-full text-slate-400 hover:text-white text-sm py-2">
-                        &larr; Back
-                      </button>
-                      <p className="text-xs text-slate-500 text-center mt-2">Legacy accounts without passwords will be automatically upgraded on login.</p>
+                      <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-colors mt-2">Secure Login</button>
+                      <button type="button" onClick={() => { setAuthScreen('intro'); setAuthError(''); setShowPassword(false); }} className="w-full text-slate-400 hover:text-white text-sm py-2">&larr; Back</button>
                     </form>
                   )}
-
                 </div>
               </div>
             );
           }
 
-          // --- Main Application Helpers ---
-          const searchResults = searchQuery 
-            ? allUsers.filter(u => u?.username?.toLowerCase().includes(searchQuery.toLowerCase()) && u.uid !== userProfile?.uid)
-            : [];
-
-          const getOtherUserFromThread = (thread) => {
-            const otherUid = thread.participants?.find(id => id !== userProfile.uid);
-            const fullUser = allUsers.find(u => u.uid === otherUid);
-            return {
-              uid: otherUid,
-              username: fullUser?.username || thread.participantDetails?.[otherUid] || 'Unknown User',
-              avatarColor: fullUser?.avatarColor || 'bg-slate-700',
-              avatarIcon: fullUser?.avatarIcon || '',
-              customAvatarUrl: fullUser?.customAvatarUrl || '',
-              bio: fullUser?.bio || 'Available',
-              joinedAt: fullUser?.joinedAt || null
-            };
-          };
-
-          const activeThreadDetails = activeThreadId ? threads.find(t => t.id === activeThreadId) : null;
-          const activeOtherUser = activeThreadDetails ? getOtherUserFromThread(activeThreadDetails) : null;
-
-          // Profile Viewer Helper
-          const viewingProfile = allUsers.find(u => u.uid === viewingProfileUid);
-
           return (
             <div className={`min-h-screen ${themeClasses.bg} text-slate-200 flex overflow-hidden font-sans transition-colors duration-300`}>
-              <style>{`
-                @keyframes shake {
-                  0% { transform: translate(1px, 1px) rotate(0deg); }
-                  10% { transform: translate(-1px, -2px) rotate(-1deg); }
-                  20% { transform: translate(-3px, 0px) rotate(1deg); }
-                  30% { transform: translate(3px, 2px) rotate(0deg); }
-                  40% { transform: translate(1px, -1px) rotate(1deg); }
-                  50% { transform: translate(-1px, 2px) rotate(-1deg); }
-                  60% { transform: translate(-3px, 1px) rotate(0deg); }
-                  70% { transform: translate(3px, 1px) rotate(-1deg); }
-                  80% { transform: translate(-1px, -1px) rotate(1deg); }
-                  90% { transform: translate(1px, 2px) rotate(0deg); }
-                  100% { transform: translate(1px, -2px) rotate(-1deg); }
-                }
-                .buzz-shake {
-                  animation: shake 0.5s;
-                  animation-iteration-count: infinite;
-                }
-                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-              `}</style>
+              
+              {/* TOAST SYSTEM */}
+              {toast && (
+                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-2xl font-semibold toast-animate flex items-center gap-2">
+                  <Check size={18} /> {toast}
+                </div>
+              )}
 
-              {/* --- Sidebar (Inbox & Search) --- */}
+              {/* Sidebar */}
               <div className={`w-full md:w-80 lg:w-96 border-r ${themeClasses.border} flex flex-col ${themeClasses.panel} z-10 transition-colors duration-300 ${(view !== 'inbox' && view !== 'search') ? 'hidden md:flex' : 'flex'}`}>
-                
-                {/* Header - Profile & Settings Access */}
                 <div className={`p-4 border-b ${themeClasses.border} flex justify-between items-center bg-black/10`}>
-                  <div 
-                    onClick={() => { setView('profile-settings'); setActiveThreadId(null); }}
-                    className="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-xl transition-colors -ml-2"
-                    title="Edit Profile"
-                  >
+                  <div onClick={() => { setView('profile-settings'); setActiveThreadId(null); }} className="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-xl transition-colors -ml-2" title="Edit Profile">
                     <Avatar user={userProfile} size="sm" />
                     <div>
                       <h2 className="font-bold text-white leading-tight">{userProfile?.username || 'User'}</h2>
-                      <span className="text-xs text-green-400 flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span> Online
-                      </span>
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <button 
-                      onClick={() => { setView('app-settings'); setActiveThreadId(null); }}
-                      className={`p-2 rounded-lg transition-colors ${view === 'app-settings' ? 'bg-black/30 text-white' : 'text-slate-400 hover:text-white hover:bg-black/20'}`}
-                      title="App Settings"
-                    >
-                      <Settings size={18} />
-                    </button>
+                    <button onClick={() => { setView('app-settings'); setActiveThreadId(null); }} className={`p-2 rounded-lg transition-colors ${view === 'app-settings' ? 'bg-black/30 text-white' : 'text-slate-400 hover:text-white hover:bg-black/20'}`} title="Settings"><Settings size={18} /></button>
                   </div>
                 </div>
 
-                {/* Search Bar */}
-                <div className="p-4">
+                <div className="p-4 border-b border-black/10">
                   <div className="relative">
                     <Search className="absolute left-3 top-3 text-slate-500" size={18} />
-                    <input 
-                      type="text"
-                      placeholder="Search username to chat..."
-                      value={searchQuery}
-                      onChange={(e) => {
-                        setSearchQuery(e.target.value);
-                        if (e.target.value) setView('search');
-                        else setView('inbox');
-                      }}
-                      onFocus={() => { if(searchQuery) setView('search') }}
-                      className={`w-full ${themeClasses.bg} border ${themeClasses.border} rounded-xl py-2.5 pl-10 pr-4 focus:outline-none focus:border-indigo-500 text-sm`}
-                    />
+                    <input type="text" placeholder="Search username..." value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setView(e.target.value ? 'search' : 'inbox'); }} onFocus={() => { if(searchQuery) setView('search') }} className={`w-full ${themeClasses.bg} border ${themeClasses.border} rounded-xl py-2.5 pl-10 pr-4 focus:outline-none focus:border-indigo-500 text-sm`} />
                   </div>
                 </div>
 
-                {/* Lists Container */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                  
-                  {/* Search Results View */}
                   {searchQuery && (
                     <div className="p-2 space-y-1">
                       <h3 className="text-xs font-semibold text-slate-500 uppercase px-3 py-2">Global Search</h3>
-                      {searchResults.length === 0 ? (
-                        <p className="text-sm text-slate-500 text-center py-4">No users found.</p>
-                      ) : (
-                        searchResults.map(u => (
-                          <div key={u.uid} className="w-full flex items-center gap-2 p-2 hover:bg-white/5 rounded-xl transition-colors">
-                            <Avatar 
-                              user={u} 
-                              size="md" 
-                              onClick={() => { setViewingProfileUid(u.uid); setView('view-profile'); setActiveThreadId(null); }} 
-                            />
-                            <div 
-                              className="flex-1 min-w-0 cursor-pointer p-1"
-                              onClick={() => startChat(u)}
-                            >
-                              <h4 className="font-semibold text-slate-200">@{u?.username || 'Unknown'}</h4>
-                              <p className="text-xs text-slate-400 truncate">{u.bio || 'Available'}</p>
-                            </div>
+                      {searchResults.length === 0 ? <p className="text-sm text-slate-500 text-center py-4">No users found.</p> : searchResults.map(u => (
+                        <div key={u.uid} className="w-full flex items-center gap-2 p-2 hover:bg-white/5 rounded-xl transition-colors">
+                          <Avatar user={u} size="md" onClick={() => { setViewingProfileUid(u.uid); setView('view-profile'); setActiveThreadId(null); }} />
+                          <div className="flex-1 min-w-0 cursor-pointer p-1" onClick={() => startChat(u)}>
+                            <h4 className="font-semibold text-slate-200">@{u?.username}</h4>
+                            <p className="text-xs text-slate-400 truncate">{u.bio || 'Available'}</p>
                           </div>
-                        ))
-                      )}
+                        </div>
+                      ))}
                     </div>
                   )}
-
-                  {/* Inbox View */}
                   {!searchQuery && (
                     <div className="p-2 space-y-1">
-                       <h3 className="text-xs font-semibold text-slate-500 uppercase px-3 py-2">Recent Chats</h3>
                        {threads.length === 0 ? (
                          <div className="text-center py-10 px-4">
-                           <div className="bg-black/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                             <MessageSquare size={24} className="text-slate-500" />
-                           </div>
+                           <div className="bg-black/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><MessageSquare size={24} className="text-slate-500" /></div>
                            <p className="text-slate-400 text-sm">Your inbox is empty.</p>
-                           <p className="text-slate-500 text-xs mt-1">Search for a username above to start chatting.</p>
                          </div>
-                       ) : (
-                         threads.map(thread => {
+                       ) : threads.map(thread => {
                            const otherUser = getOtherUserFromThread(thread);
                            const isActive = activeThreadId === thread.id && view === 'chat';
                            const displayLastMessage = typeof thread.lastMessage === 'string' ? thread.lastMessage : 'No messages yet';
-                           
                            return (
-                             <div key={thread.id} className={`w-full flex items-center gap-2 p-2 rounded-xl transition-colors ${isActive ? 'bg-indigo-900/40 border border-indigo-500/30' : 'hover:bg-white/5 border border-transparent'}`}>
-                                <Avatar 
-                                  user={otherUser} 
-                                  size="md" 
-                                  onClick={() => { setViewingProfileUid(otherUser.uid); setView('view-profile'); setActiveThreadId(null); }} 
-                                />
-                                <div 
-                                  className="flex-1 min-w-0 cursor-pointer p-1"
-                                  onClick={() => { setActiveThreadId(thread.id); setView('chat'); }}
-                                >
+                             <div key={thread.id} className={`w-full flex items-center gap-2 p-2 rounded-xl transition-colors ${isActive ? 'bg-indigo-900/40 border border-indigo-500/30' : 'hover:bg-white/5'}`}>
+                                <Avatar user={otherUser} size="md" onClick={() => { setViewingProfileUid(otherUser.uid); setView('view-profile'); setActiveThreadId(null); }} />
+                                <div className="flex-1 min-w-0 cursor-pointer p-1" onClick={() => { setActiveThreadId(thread.id); setView('chat'); }}>
                                   <div className="flex justify-between items-baseline mb-0.5">
-                                    <h4 className="font-semibold text-slate-200 truncate">{otherUser?.username || 'Unknown User'}</h4>
+                                    <h4 className="font-semibold text-slate-200 truncate">{otherUser?.username}</h4>
                                   </div>
                                   <p className="text-sm text-slate-500 truncate flex items-center gap-1">
                                     {displayLastMessage.includes('whisper') && <EyeOff size={12} className="inline" />}
-                                    {displayLastMessage.includes('Buzz') && <Zap size={12} className="inline text-yellow-500" />}
+                                    {displayLastMessage.includes('video') && <Video size={12} className="inline" />}
+                                    {displayLastMessage.includes('image') && <ImageIcon size={12} className="inline" />}
+                                    {displayLastMessage.includes('Urgent') && <AlertCircle size={12} className="inline text-red-500" />}
                                     {displayLastMessage}
                                   </p>
                                 </div>
                              </div>
                            );
-                         })
-                       )}
+                       })}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* --- Main Area Dynamic View --- */}
+              {/* Main Area */}
               <div className={`flex-1 flex flex-col ${themeClasses.bg} relative transition-colors duration-300 ${(view === 'inbox' || view === 'search') ? 'hidden md:flex' : 'flex'}`}>
                 
-                {/* VIEW: PROFILE SETTINGS */}
-                {view === 'profile-settings' ? (
+                {/* Profile Settings */}
+                {view === 'profile-settings' && (
                   <div className="flex-1 flex flex-col h-full p-4 md:p-8 overflow-y-auto custom-scrollbar">
-                    <div className="max-w-2xl w-full mx-auto">
-                      <div className="flex items-center gap-4 mb-8">
-                        <button onClick={() => setView('inbox')} className={`md:hidden p-2 ${themeClasses.panel} rounded-xl text-slate-400`}>
-                          <ArrowLeft size={20} />
-                        </button>
-                        <h2 className="text-2xl font-bold text-white flex items-center gap-2"><UserCircle /> Profile Settings</h2>
+                    <div className="max-w-2xl w-full mx-auto space-y-6">
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => setView('inbox')} className={`md:hidden p-2 ${themeClasses.panel} rounded-xl text-slate-400`}><ArrowLeft size={20} /></button>
+                        <h2 className="text-2xl font-bold text-white flex items-center gap-2"><UserCircle /> Profile Details</h2>
                       </div>
 
-                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl mb-6`}>
+                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl`}>
                         <form onSubmit={handleUpdateProfile} className="space-y-6">
-                          {/* Bio/Status */}
-                          <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-2">Bio / Status</label>
-                            <input 
-                              type="text" 
-                              value={editBio}
-                              onChange={(e) => setEditBio(e.target.value)}
-                              maxLength={50}
-                              placeholder="What's on your mind?"
-                              className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-3 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-1 transition-all`}
-                            />
-                            <p className="text-xs text-slate-500 mt-2 text-right">{editBio.length}/50</p>
-                          </div>
-
-                          {/* Avatar Photo Upload */}
-                          <div>
-                             <label className="block text-sm font-medium text-slate-400 mb-3">Custom Profile Photo</label>
-                             <div className="flex items-center gap-4">
-                               <div className="relative group">
-                                 <Avatar 
-                                   user={{ username: userProfile?.username, customAvatarUrl: editCustomImage, avatarColor: editColor, avatarIcon: editIcon }} 
-                                   size="lg" 
-                                   className="border-4 border-slate-900"
-                                 />
-                                 <button
-                                   type="button"
-                                   onClick={() => fileInputRef.current?.click()}
-                                   className="absolute inset-0 bg-black/50 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                                 >
-                                   <Camera size={28} className="text-white mb-1" />
-                                   <span className="text-xs font-bold text-white">Upload</span>
-                                 </button>
-                               </div>
-                               
-                               <div className="flex-1">
-                                 <input 
-                                   type="file" 
-                                   accept="image/*"
-                                   ref={fileInputRef}
-                                   onChange={handleImageUpload}
-                                   className="hidden"
-                                 />
-                                 <p className="text-sm text-slate-400 mb-3">Upload a custom image. It will be compressed to save space.</p>
-                                 {editCustomImage && (
-                                   <button 
-                                     type="button" 
-                                     onClick={() => setEditCustomImage('')}
-                                     className="text-sm text-red-400 hover:text-red-300 font-medium"
-                                   >
-                                     Remove Custom Photo
-                                   </button>
-                                 )}
-                               </div>
-                             </div>
-                          </div>
-
-                          {/* Avatar DP/Icon (Fallback) */}
-                          {!editCustomImage && (
-                            <>
-                              <div>
-                                <label className="block text-sm font-medium text-slate-400 mb-3">Or choose an Emoji Avatar</label>
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditIcon('')}
-                                    className={`w-12 h-12 rounded-xl bg-black/20 flex items-center justify-center text-lg font-bold border-2 ${editIcon === '' ? 'border-indigo-500' : 'border-transparent hover:border-slate-600'}`}
-                                    title="Use Initial"
-                                  >
-                                    {String(userProfile?.username || '?').charAt(0).toUpperCase()}
-                                  </button>
-                                  {AVATAR_ICONS.map(icon => (
-                                    <button
-                                      key={icon}
-                                      type="button"
-                                      onClick={() => setEditIcon(icon)}
-                                      className={`w-12 h-12 rounded-xl bg-black/20 flex items-center justify-center text-2xl border-2 transition-transform hover:scale-110 ${editIcon === icon ? 'border-indigo-500 bg-indigo-500/20' : 'border-transparent hover:border-slate-600'}`}
-                                    >
-                                      {icon}
-                                    </button>
-                                  ))}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                              <label className="block text-sm font-medium text-slate-400 mb-2">Banner Color</label>
+                              <div className="flex flex-wrap gap-2 mb-4">
+                                {BANNER_COLORS.map(color => (
+                                  <button key={color} type="button" onClick={() => setEditProfileData({...editProfileData, banner: color})} className={`w-8 h-8 rounded-full ${color} flex items-center justify-center ${editProfileData.banner === color ? 'ring-2 ring-offset-2 ring-offset-slate-900 ring-white' : ''}`}></button>
+                                ))}
+                              </div>
+                              <label className="block text-sm font-medium text-slate-400 mb-2">Display Picture</label>
+                              <div className="flex items-center gap-4">
+                                <div className="relative group">
+                                  <Avatar user={{ username: userProfile?.username, customAvatarUrl: editProfileData.image, avatarColor: editProfileData.color, avatarIcon: editProfileData.icon }} size="lg" className="border-4 border-slate-900" />
+                                  <button type="button" onClick={() => fileInputRef.current?.click()} className="absolute inset-0 bg-black/50 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Camera size={28} className="text-white mb-1" /><span className="text-xs font-bold text-white">Upload</span></button>
+                                </div>
+                                <div className="flex-1">
+                                  <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={e => processFile(e.target.files[0], url => setEditProfileData({...editProfileData, image: url}), 500)} />
+                                  {editProfileData.image && <button type="button" onClick={() => setEditProfileData({...editProfileData, image: ''})} className="text-sm text-red-400 hover:text-red-300 mt-2">Remove Photo</button>}
                                 </div>
                               </div>
-
-                              {/* Avatar Color */}
+                            </div>
+                            <div className="space-y-4">
                               <div>
-                                <label className="block text-sm font-medium text-slate-400 mb-3">Avatar Background Color</label>
-                                <div className="flex flex-wrap gap-3">
-                                  {AVATAR_COLORS.map(color => (
-                                    <button
-                                      key={color}
-                                      type="button"
-                                      onClick={() => setEditColor(color)}
-                                      className={`w-12 h-12 rounded-full ${color} flex items-center justify-center transition-transform hover:scale-110 ${editColor === color ? 'ring-4 ring-offset-2 ring-offset-slate-900 ring-indigo-500' : ''}`}
-                                    >
-                                      {editColor === color && <Check size={20} className="text-white" />}
-                                    </button>
-                                  ))}
-                                </div>
+                                <label className="block text-sm font-medium text-slate-400 mb-2">Bio</label>
+                                <input type="text" value={editProfileData.bio} onChange={(e) => setEditProfileData({...editProfileData, bio: e.target.value})} maxLength={50} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-2.5 rounded-xl focus:outline-none focus:border-indigo-500`} />
                               </div>
-                            </>
-                          )}
-
+                              <div>
+                                <label className="block text-sm font-medium text-slate-400 mb-2">Location</label>
+                                <input type="text" value={editProfileData.location} onChange={(e) => setEditProfileData({...editProfileData, location: e.target.value})} maxLength={30} className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-2.5 rounded-xl focus:outline-none focus:border-indigo-500`} />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-slate-400 mb-2">Website</label>
+                                <input type="url" value={editProfileData.website} onChange={(e) => setEditProfileData({...editProfileData, website: e.target.value})} placeholder="https://" className={`w-full ${themeClasses.bg} border ${themeClasses.border} text-white px-4 py-2.5 rounded-xl focus:outline-none focus:border-indigo-500`} />
+                              </div>
+                            </div>
+                          </div>
                           <hr className={`border-${themeClasses.border.split('-')[1]}-800`} />
-
-                          <button 
-                            type="submit"
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors w-full sm:w-auto"
-                          >
-                            Save Profile Changes
-                          </button>
+                          <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl w-full sm:w-auto transition-colors">Save Profile Changes</button>
                         </form>
                       </div>
                     </div>
                   </div>
-                ) : 
+                )}
 
-                /* VIEW: APP SETTINGS */
-                view === 'app-settings' ? (
+                {/* App Settings */}
+                {view === 'app-settings' && (
                   <div className="flex-1 flex flex-col h-full p-4 md:p-8 overflow-y-auto custom-scrollbar">
                      <div className="max-w-2xl w-full mx-auto space-y-6">
-                      <div className="flex items-center gap-4 mb-4">
-                        <button onClick={() => setView('inbox')} className={`md:hidden p-2 ${themeClasses.panel} rounded-xl text-slate-400`}>
-                          <ArrowLeft size={20} />
-                        </button>
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => setView('inbox')} className={`md:hidden p-2 ${themeClasses.panel} rounded-xl text-slate-400`}><ArrowLeft size={20} /></button>
                         <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Settings /> App Settings</h2>
                       </div>
-
-                      {/* Theme Selection */}
-                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl`}>
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-4"><Palette size={20} /> Appearance</h3>
+                      
+                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6`}>
+                        <h3 className="text-lg font-bold text-white mb-4"><Palette size={20} className="inline mr-2" /> Appearance</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          {Object.entries(APP_THEMES).map(([key, themeObj]) => (
-                            <button
-                              key={key}
-                              onClick={() => setAppThemeKey(key)}
-                              className={`p-4 rounded-xl border-2 flex flex-col items-center gap-3 transition-all ${appThemeKey === key ? 'border-indigo-500 bg-indigo-500/10' : `${themeClasses.border} hover:border-slate-500`}`}
-                            >
-                              <div className={`w-full h-12 rounded-lg ${themeObj.bg} border ${themeObj.border}`}></div>
-                              <span className="font-medium">{themeObj.name}</span>
+                          {Object.entries(APP_THEMES).map(([key, obj]) => (
+                            <button key={key} onClick={() => setAppThemeKey(key)} className={`p-4 rounded-xl border-2 flex flex-col items-center gap-3 transition-all ${appThemeKey === key ? 'border-indigo-500 bg-indigo-500/10' : `${themeClasses.border}`}`}>
+                              <div className={`w-full h-8 rounded-lg ${obj.bg} border ${obj.border}`}></div>
+                              <span className="font-medium text-sm">{obj.name}</span>
                             </button>
                           ))}
                         </div>
                       </div>
 
-                      {/* Notifications */}
-                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl`}>
-                         <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-4"><Bell size={20} /> Notifications</h3>
-                         <div className="flex items-center justify-between">
-                           <div>
-                             <p className="text-slate-200 font-medium">System Notifications</p>
-                             <p className="text-xs text-slate-400">Get alerts & vibrations for new messages</p>
-                           </div>
-                           {notifPermission === 'granted' ? (
-                             <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm font-bold">Enabled</span>
-                           ) : (
-                             <button 
-                               onClick={() => {
-                                 if (typeof window.Notification !== 'undefined') {
-                                   window.Notification.requestPermission().then(p => setNotifPermission(p));
-                                 } else {
-                                   alert("Notifications not supported on this browser.");
-                                 }
-                               }}
-                               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold transition-colors"
-                             >
-                               Enable
+                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6`}>
+                         <h3 className="text-lg font-bold text-white mb-4"><ShieldAlert size={20} className="inline mr-2" /> Privacy & Notifications</h3>
+                         <div className="space-y-4">
+                           <div className="flex justify-between items-center">
+                             <div><p className="font-medium">Incognito Mode</p><p className="text-xs text-slate-400">Hide from global search (mock feature)</p></div>
+                             <button onClick={() => setIncognitoMode(!incognitoMode)} className={`w-12 h-6 rounded-full flex items-center px-1 transition-colors ${incognitoMode ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                               <div className={`w-4 h-4 bg-white rounded-full transition-transform ${incognitoMode ? 'translate-x-6' : ''}`}></div>
                              </button>
-                           )}
+                           </div>
+                           <hr className={`border-${themeClasses.border.split('-')[1]}-800`} />
+                           <div className="flex justify-between items-center">
+                             <div><p className="font-medium">System Push Notifications</p><p className="text-xs text-slate-400">OS-level alerts</p></div>
+                             {notifPermission === 'granted' ? <span className="text-green-400 text-sm font-bold">Enabled</span> : <button onClick={() => { try { window.Notification?.requestPermission().then(setNotifPermission); } catch(e){} }} className="px-3 py-1 bg-indigo-600 rounded-lg text-sm font-bold">Enable</button>}
+                           </div>
                          </div>
                       </div>
 
-                      {/* Danger Zone */}
-                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl`}>
-                         <h3 className="text-lg font-bold text-red-400 mb-4">Account Access</h3>
-                         <button 
-                            onClick={handleLogout}
-                            className="w-full flex justify-center items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 font-semibold py-3 rounded-xl transition-colors"
-                          >
-                            <LogOut size={18} /> Sign Out of NexusChat
-                         </button>
-                      </div>
-
-                      {/* Credits */}
-                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 shadow-xl text-center space-y-4`}>
-                         <h3 className="text-lg font-bold text-indigo-400 flex items-center justify-center gap-2 mb-4"><Info size={20} /> Credits</h3>
-                         <p className="text-slate-300">Proudly Developed By</p>
-                         <div className="text-2xl font-black bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-                           Subhajit Roy
-                         </div>
+                      <div className={`${themeClasses.panel} border ${themeClasses.border} rounded-2xl p-6 text-center`}>
+                         <h3 className="text-lg font-bold text-indigo-400 mb-4"><Info size={20} className="inline mr-2" /> Credits</h3>
+                         <p className="text-slate-300">Developed By <span className="font-black bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent block text-2xl mt-1">Subhajit Roy</span></p>
                          <div className="flex items-center justify-center gap-6 mt-6 pt-6 border-t border-slate-700/50">
-                            <div className="flex flex-col items-center gap-1">
-                              <Sparkles className="text-yellow-400" size={24} />
-                              <span className="text-xs text-slate-400 font-medium tracking-widest uppercase">Gemini</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-1">
-                              <Heart className="text-red-400" size={24} />
-                              <span className="text-xs text-slate-400 font-medium tracking-widest uppercase">Firebase</span>
-                            </div>
+                            <div className="flex flex-col items-center gap-1"><Sparkles className="text-yellow-400" size={24} /><span className="text-[10px] tracking-widest uppercase">Gemini</span></div>
+                            <div className="flex flex-col items-center gap-1"><Heart className="text-red-400" size={24} /><span className="text-[10px] tracking-widest uppercase">Firebase</span></div>
                          </div>
+                         <button onClick={handleLogout} className="mt-8 px-6 py-2 bg-red-500/10 text-red-500 rounded-xl font-bold hover:bg-red-500/20 w-full transition-colors">Sign Out</button>
                       </div>
                      </div>
                   </div>
-                ) : 
+                )}
 
-                /* VIEW: VIEW PROFILE */
-                view === 'view-profile' && viewingProfile ? (
-                  <div className="flex-1 flex flex-col h-full p-4 md:p-8 overflow-y-auto items-center justify-center">
-                    <div className={`max-w-md w-full ${themeClasses.panel} border ${themeClasses.border} rounded-3xl p-8 shadow-2xl text-center relative`}>
-                       <button 
-                          onClick={() => setView('inbox')} 
-                          className="absolute top-4 left-4 p-2 bg-black/20 hover:bg-black/40 rounded-full text-slate-400 transition-colors"
-                        >
-                          <ArrowLeft size={20} />
-                        </button>
+                {/* View Profile Overlay */}
+                {view === 'view-profile' && viewingProfile && (
+                  <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
+                    <div className={`w-full max-w-sm ${themeClasses.panel} border ${themeClasses.border} rounded-3xl overflow-hidden shadow-2xl relative`}>
+                       <div className={`h-32 w-full ${viewingProfile.bannerColor || 'bg-slate-800'}`}></div>
+                       <button onClick={() => setView('inbox')} className="absolute top-4 left-4 p-2 bg-black/40 rounded-full text-white"><ArrowLeft size={20} /></button>
                        
-                       <div className="flex justify-center mb-6">
-                         <Avatar user={viewingProfile} size="lg" className={`border-4 ${themeClasses.border}`} />
-                       </div>
-                       
-                       <h2 className="text-3xl font-bold text-white mb-1">@{viewingProfile.username}</h2>
-                       <p className="text-indigo-400 font-medium mb-6">{viewingProfile.bio || 'Available'}</p>
-                       
-                       <div className="bg-black/20 rounded-xl p-4 mb-8 text-sm text-slate-400">
-                         Joined NexusChat on {viewingProfile.joinedAt ? new Date(viewingProfile.joinedAt).toLocaleDateString() : 'Unknown'}
-                       </div>
+                       <div className="px-6 pb-6 text-center relative -top-12">
+                         <Avatar user={viewingProfile} size="lg" className={`mx-auto border-4 ${themeClasses.panel} shadow-xl mb-4 bg-slate-800`} />
+                         <h2 className="text-2xl font-bold text-white mb-1">@{viewingProfile.username}</h2>
+                         <p className="text-indigo-400 font-medium mb-4">{viewingProfile.bio || 'Available'}</p>
+                         
+                         <div className="flex flex-wrap gap-2 justify-center mb-6">
+                           {viewingProfile.location && <div className="flex items-center gap-1 text-xs bg-white/5 px-3 py-1.5 rounded-full"><MapPin size={12}/> {viewingProfile.location}</div>}
+                           {viewingProfile.website && <div className="flex items-center gap-1 text-xs bg-white/5 px-3 py-1.5 rounded-full text-blue-400"><LinkIcon size={12}/> <a href={viewingProfile.website} target="_blank">{viewingProfile.website.replace('https://','')}</a></div>}
+                         </div>
 
-                       <button 
-                          onClick={() => startChat(viewingProfile)}
-                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-6 rounded-xl transition-transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
-                        >
-                          <MessageSquare size={20} /> Message {viewingProfile.username}
-                        </button>
+                         <button onClick={() => startChat(viewingProfile)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 shadow-lg"><MessageSquare size={18} /> Message</button>
+                       </div>
                     </div>
                   </div>
-                ) : 
+                )}
 
-                /* VIEW: CHAT */
-                activeThreadId ? (
-                  <div className={`flex-1 flex flex-col h-full ${isBuzzed ? 'buzz-shake' : ''}`}>
-                    
-                    {/* Chat Header */}
+                {/* Chat Interface */}
+                {view === 'chat' && activeThreadId && (
+                  <div className="flex-1 flex flex-col h-full">
                     <div className={`h-16 px-4 border-b ${themeClasses.border} flex items-center justify-between bg-black/10 backdrop-blur-md z-10 sticky top-0`}>
                       <div className="flex items-center gap-3">
-                        <button onClick={() => setView('inbox')} className="md:hidden p-2 -ml-2 text-slate-400 hover:text-white">
-                          <ArrowLeft size={20} />
-                        </button>
-                        <Avatar 
-                          user={activeOtherUser} 
-                          size="sm" 
-                          onClick={() => { setViewingProfileUid(activeOtherUser?.uid); setView('view-profile'); }}
-                        />
-                        <div 
-                          className="flex flex-col cursor-pointer"
-                          onClick={() => { setViewingProfileUid(activeOtherUser?.uid); setView('view-profile'); }}
-                        >
-                          <h3 className="font-bold text-white leading-tight">@{activeOtherUser?.username || 'Unknown User'}</h3>
-                          <span className="text-xs text-slate-400 truncate max-w-[150px] sm:max-w-[300px]">{activeOtherUser?.bio || 'Available'}</span>
+                        <button onClick={() => setView('inbox')} className="md:hidden p-2 -ml-2 text-slate-400"><ArrowLeft size={20} /></button>
+                        <Avatar user={activeOtherUser} size="sm" onClick={() => { setViewingProfileUid(activeOtherUser?.uid); setView('view-profile'); }} />
+                        <div className="flex flex-col cursor-pointer" onClick={() => { setViewingProfileUid(activeOtherUser?.uid); setView('view-profile'); }}>
+                          <h3 className="font-bold text-white leading-tight">@{activeOtherUser?.username}</h3>
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button 
-                          onClick={() => sendMessage(null, 'buzz')}
-                          className="px-3 py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-yellow-500/20"
-                          title="Send a Buzz to shake their screen!"
-                        >
-                          <Zap size={16} /> <span className="hidden sm:inline">Buzz</span>
-                        </button>
+                        <button onClick={() => sendMessage(null, 'buzz')} className="px-3 py-1.5 bg-yellow-500/10 text-yellow-500 rounded-lg text-sm font-medium flex gap-2 border border-yellow-500/20" title="Send a Buzz!"><Zap size={16} /><span className="hidden sm:inline">Buzz</span></button>
+                        <button onClick={handleClearChat} className="px-3 py-1.5 bg-red-500/10 text-red-500 rounded-lg text-sm font-medium flex gap-2 border border-red-500/20 hover:bg-red-500/20" title="Nuke Chat History"><Trash size={16} /></button>
                       </div>
                     </div>
 
-                    {/* Messages Area */}
-                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 custom-scrollbar relative">
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 custom-scrollbar">
                        {messages.length === 0 ? (
                          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-4">
                             <Sparkles size={40} className="text-indigo-900/50" />
-                            <p>This is the beginning of your chat with {activeOtherUser?.username || 'them'}.</p>
-                            <div className={`${themeClasses.panel} p-4 rounded-xl max-w-sm text-sm border ${themeClasses.border} text-center`}>
-                              Try sending a <strong>Whisper</strong> (hidden message) or a <strong>Buzz</strong> to get their attention!
-                            </div>
+                            <p>Say hello to {activeOtherUser?.username}.</p>
                          </div>
-                       ) : (
-                         messages.map(msg => {
-                           const isMe = msg.senderId === userProfile.uid;
-                           
-                           if (msg.isBuzz) {
-                             return (
-                               <div key={msg.id} className="w-full flex justify-center my-2 group relative">
-                                 <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2">
-                                   <Zap size={14} /> 
-                                   {isMe ? `You buzzed ${activeOtherUser?.username || 'them'}` : `${activeOtherUser?.username || 'Someone'} buzzed you!`}
-                                 </div>
-                                 {isMe && (
-                                   <button 
-                                     onClick={() => handleDeleteMessage(msg.id)}
-                                     className="absolute right-[calc(50%-100px)] p-1 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                     title="Delete buzz log"
-                                   >
-                                     <Trash2 size={14} />
-                                   </button>
-                                 )}
-                               </div>
-                             )
-                           }
-
-                           if (msg.isWhisper) {
-                             return <WhisperBubble key={msg.id} msg={msg} currentUserId={userProfile.uid} onDelete={handleDeleteMessage} />;
-                           }
-
-                           return (
-                             <div key={msg.id} className={`flex flex-col max-w-[75%] ${isMe ? 'self-end items-end' : 'self-start items-start'} my-0.5 group relative`}>
-                                <div className={`px-4 py-2.5 rounded-2xl ${
-                                  isMe 
-                                    ? `${userProfile?.avatarColor || 'bg-indigo-600'} text-white rounded-tr-sm shadow-sm` 
-                                    : `${themeClasses.panel} text-slate-200 border ${themeClasses.border} rounded-tl-sm shadow-sm`
-                                }`}>
-                                  <p className="break-words">{typeof msg.text === 'string' ? msg.text : String(msg.text)}</p>
-                                </div>
-                                {isMe && (
-                                  <button 
-                                    onClick={() => handleDeleteMessage(msg.id)}
-                                    className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title="Delete message"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                )}
-                             </div>
-                           );
-                         })
-                       )}
+                       ) : messages.map(msg => <MessageBubble key={msg.id} msg={msg} isMe={msg.senderId === userProfile.uid} />)}
                        <div ref={messagesEndRef} />
                     </div>
 
-                    {/* Input Area */}
-                    <div className={`p-3 sm:p-4 ${themeClasses.panel} border-t ${themeClasses.border}`}>
-                      <form onSubmit={(e) => sendMessage(e, 'text')} className="flex items-end gap-2">
-                        <button 
-                          type="button"
-                          onClick={() => setIsWhisperMode(!isWhisperMode)}
-                          className={`p-3 rounded-xl transition-all ${isWhisperMode ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)]' : 'bg-black/20 text-slate-400 hover:text-white'}`}
-                          title="Whisper Mode (Self-destructing message)"
-                        >
-                          <EyeOff size={20} />
-                        </button>
-                        {isWhisperMode && (
-                           <button 
-                             type="button"
-                             onClick={cycleWhisperTimer}
-                             className="p-3 bg-purple-900/50 border border-purple-500/30 text-purple-200 rounded-xl font-bold flex items-center justify-center min-w-[3rem] transition-colors hover:bg-purple-800/60"
-                             title="Whisper Duration"
-                           >
-                             {whisperTimer}s
-                           </button>
-                        )}
-                        <div className="flex-1 relative">
-                          <input 
-                            type="text" 
-                            value={messageInput}
-                            onChange={(e) => setMessageInput(e.target.value)}
-                            placeholder={isWhisperMode ? `Type a secret whisper (${whisperTimer}s)...` : "Type a message..."}
-                            className={`w-full ${themeClasses.bg} border rounded-xl py-3 px-4 focus:outline-none transition-all ${
-                              isWhisperMode 
-                                ? 'border-purple-500/50 focus:border-purple-500 text-purple-100 placeholder-purple-500/50' 
-                                : `${themeClasses.border} focus:border-indigo-500 text-white`
-                            }`}
-                          />
-                        </div>
-                        <button 
-                          type="submit"
-                          disabled={!messageInput.trim()}
-                          className={`p-3 ${userProfile?.avatarColor?.replace('bg-', 'bg-').replace('-600', '-600') || 'bg-indigo-600'} hover:opacity-80 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl transition-all flex items-center justify-center`}
-                        >
-                          <Send size={20} />
-                        </button>
-                      </form>
-                      {isWhisperMode && (
-                        <div className="text-xs text-purple-400 mt-2 ml-2 flex items-center gap-1">
-                          <Sparkles size={10} /> Whisper will be permanently deleted {whisperTimer} seconds after being opened.
-                        </div>
+                    <div className={`p-3 ${themeClasses.panel} border-t ${themeClasses.border}`}>
+                      
+                      {/* Attachment Preview */}
+                      {chatAttachment && (
+                         <div className="mb-3 flex items-start gap-2 bg-black/20 p-2 rounded-xl relative w-fit max-w-full">
+                           {chatAttachment.type === 'image' && <img src={chatAttachment.url} className="h-16 rounded-lg" />}
+                           {chatAttachment.type === 'video' && <video src={chatAttachment.url} className="h-16 rounded-lg" />}
+                           {chatAttachment.type === 'audio' && <audio src={chatAttachment.url} controls className="h-10" />}
+                           <button type="button" onClick={() => setChatAttachment(null)} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full p-1"><X size={14}/></button>
+                         </div>
                       )}
-                    </div>
 
+                      <form onSubmit={(e) => sendMessage(e, 'text')} className="flex items-end gap-2">
+                        {/* Audio Recorder */}
+                        {isRecording ? (
+                           <button type="button" onClick={stopRecording} className="p-3 rounded-xl bg-red-600 text-white animate-pulse shrink-0"><Square size={20} /></button>
+                        ) : (
+                           <button type="button" onClick={startRecording} className={`p-3 rounded-xl bg-black/20 text-slate-400 hover:text-white shrink-0`} title="Hold to record audio (15s max)"><Mic size={20} /></button>
+                        )}
+                        
+                        <button type="button" onClick={() => setIsWhisperMode(!isWhisperMode)} className={`p-3 rounded-xl transition-all ${isWhisperMode ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.5)]' : 'bg-black/20 text-slate-400 hover:text-white'} shrink-0`} title="Whisper Mode"><EyeOff size={20} /></button>
+                        <button type="button" onClick={() => setIsUrgentMode(!isUrgentMode)} className={`p-3 rounded-xl transition-all ${isUrgentMode ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-black/20 text-slate-400 hover:text-white'} shrink-0`} title="Urgent Mode"><ShieldAlert size={20} /></button>
+                        
+                        {isWhisperMode && (
+                           <button type="button" onClick={cycleWhisperTimer} className="p-3 bg-purple-900/50 border border-purple-500/30 text-purple-200 rounded-xl font-bold flex items-center justify-center min-w-[3rem] transition-colors hover:bg-purple-800/60" title="Whisper Duration">{whisperTimer}s</button>
+                        )}
+                        
+                        <div className="flex-1 relative flex bg-black/20 rounded-xl border border-transparent focus-within:border-indigo-500 transition-colors px-2">
+                           <input type="file" ref={chatFileRef} accept="image/*,video/mp4" className="hidden" onChange={e => processFile(e.target.files[0], (url, type) => setChatAttachment({url, type}), 700)} />
+                           <button type="button" onClick={() => chatFileRef.current?.click()} className="p-3 text-slate-400 hover:text-white shrink-0"><Paperclip size={20} /></button>
+                           
+                           {isRecording ? (
+                               <div className="w-full flex items-center gap-2 text-red-400 px-3"><div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div> Recording... 0:{recordingTime.toString().padStart(2, '0')} / 0:15</div>
+                           ) : (
+                               <input type="text" value={messageInput} onChange={e => setMessageInput(e.target.value)} placeholder={isWhisperMode ? `Secret whisper (${whisperTimer}s)...` : (isUrgentMode ? "URGENT MESSAGE..." : "Message...")} className="w-full bg-transparent py-3 focus:outline-none text-white min-w-0" />
+                           )}
+                        </div>
+                        
+                        <button type="submit" disabled={(!messageInput.trim() && !chatAttachment) || isRecording} className={`p-3 ${userProfile?.avatarColor?.replace('bg-', 'bg-').replace('-600', '-600') || 'bg-indigo-600'} disabled:opacity-50 text-white rounded-xl transition-all shrink-0`}><Send size={20} /></button>
+                      </form>
+                      
+                      {isWhisperMode && <div className="text-xs text-purple-400 mt-2 ml-2 flex items-center gap-1 cursor-pointer hover:text-purple-300" onClick={cycleWhisperTimer}><Sparkles size={10} /> Whisper vanishes {whisperTimer}s after opening. (Click to change)</div>}
+                      {isUrgentMode && <div className="text-xs text-red-400 mt-2 ml-2 flex items-center gap-1"><AlertCircle size={10} /> This message will ring and flash on the recipient's screen until acknowledged.</div>}
+                    </div>
                   </div>
-                ) : 
-                
-                /* VIEW: EMPTY STATE (Inbox but no chat selected on wide screens) */
-                (
+                )}
+
+                {/* Empty State */}
+                {view === 'inbox' && (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-500 hidden md:flex">
-                     <div className={`w-24 h-24 border-2 border-dashed ${themeClasses.border} rounded-full flex items-center justify-center mb-6`}>
-                       <MessageSquare size={40} className="text-slate-600" />
-                     </div>
+                     <div className={`w-24 h-24 border-2 border-dashed ${themeClasses.border} rounded-full flex items-center justify-center mb-6`}><MessageSquare size={40} className="text-slate-600" /></div>
                      <h2 className="text-xl font-bold text-slate-400 mb-2">NexusChat for Web</h2>
-                     <p className="text-sm max-w-md text-center">Select a chat from the sidebar or search for a username to start a new encrypted conversation.</p>
+                     <p className="text-sm max-w-md text-center">Select a chat from the sidebar to start a new encrypted conversation.</p>
                   </div>
                 )}
               </div>
-
             </div>
           );
         }
 
-        // --- Render Application ---
         const root = createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
